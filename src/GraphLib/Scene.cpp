@@ -9,7 +9,6 @@
 
 namespace GraphLib {
     AScene::AScene(Game& game) : _game(game) {}
-    AScene::~AScene() {}
 
     void AScene::addEntity(std::unique_ptr<Entity> entity) {
         _entities.push_back(std::move(entity));

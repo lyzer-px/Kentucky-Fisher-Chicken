@@ -18,7 +18,7 @@ namespace GraphLib {
     class AScene {
         public:
             AScene(Game& game);
-            ~AScene();
+            virtual ~AScene() = default;
             void addEntity(std::unique_ptr<Entity> entity);
             Entity* getEntity(const std::string& name) const;
 

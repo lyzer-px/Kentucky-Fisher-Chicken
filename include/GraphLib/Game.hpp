@@ -15,8 +15,6 @@
 
 namespace GraphLib {
 
-    class AScene;
-
     typedef enum currentScene {
         MAIN_MENU = 0,
         GAME_SCENE = 1,
@@ -31,6 +29,7 @@ namespace GraphLib {
             void setCurrentScene(currentScene_t scene);
             currentScene_t getCurrentScene() const;
             void loadScene(currentScene_t scene, std::unique_ptr<AScene> scenePtr);
+            sf::RenderWindow& getWindow();
             void run();
 
         private:

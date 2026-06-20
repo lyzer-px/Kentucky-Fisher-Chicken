@@ -7,6 +7,7 @@
 
 #include "GraphLib/Game.hpp"
 #include "GraphLib/Scene.hpp"
+#include <SFML/System/Clock.hpp>
 
 namespace GraphLib {
     Game::Game() : _currentScene(MAIN_MENU), _window(sf::VideoMode(800, 600), "GraphLib Game") {}
@@ -36,11 +37,17 @@ namespace GraphLib {
         return _currentScene;
     }
 
+    sf::RenderWindow &Game::getWindow() {
+        return _window;
+    }
+
     void Game::loadScene(currentScene_t scene, std::unique_ptr<AScene> scenePtr) {
         _scenes[scene] = std::move(scenePtr);
     }
 
     void Game::run() {
+        sf::Clock clock;
+
         while (_window.isOpen()) {
             sf::Event event;
             while (_window.pollEvent(event)) {
@@ -54,7 +61,7 @@ namespace GraphLib {
 
             _window.clear();
             if (_scenes.find(_currentScene) != _scenes.end()) {
-                _scenes[_currentScene]->update(1);
+                _scenes[_currentScene]->update(clock.restart().asSeconds());
                 _scenes[_currentScene]->render();
             }
             _window.display();

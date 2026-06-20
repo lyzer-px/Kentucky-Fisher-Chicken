@@ -44,7 +44,7 @@ namespace GraphLib {
             std::size_t _columns;
             std::size_t _rows;
             float _frameDuration;
-            float _elapsedTime;
+            float _elapsedTime = 0.0f;
     };
 
     class Entity {
