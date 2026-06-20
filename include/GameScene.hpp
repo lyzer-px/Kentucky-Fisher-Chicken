@@ -29,17 +29,25 @@ namespace GraphLib {
         int         weight;     // spawn weight (higher = more common)
         sf::Color   color;
         sf::Color   outline;
+        const char* textureName;
     };
 
+    // static inline const std::array<SphereTypeInfo, 4> SPHERE_TYPES = {{
+    //     { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180) }, // small  blue
+    //     { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0) }, // medium orange
+    //     { 24.f, 6,  12, sf::Color(80,  210,  80), sf::Color(20,  120, 20) }, // large  green
+    //     { 10.f, 10,  3, sf::Color(200,  60, 220), sf::Color(100,  10, 120) }, // rare   purple
+    // }};
+
     static inline const std::array<SphereTypeInfo, 4> SPHERE_TYPES = {{
-        { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180) }, // small  blue
-        { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0) }, // medium orange
-        { 24.f, 6,  12, sf::Color(80,  210,  80), sf::Color(20,  120, 20) }, // large  green
-        { 10.f, 10,  3, sf::Color(200,  60, 220), sf::Color(100,  10, 120) }, // rare   purple
+        { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180), "fish_blue"   },
+        { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0), "fish_orange" },
+        { 24.f, 6,  12, sf::Color(80,  210,  80), sf::Color(20,  120, 20), "fish_green"  },
+        { 10.f, 10,  3, sf::Color(230,  80, 180), sf::Color(140,  20, 90), "fish_pink"   },
     }};
 
     struct Prey {
-        sf::CircleShape shape;
+        std::unique_ptr<Entity> entity;
         sf::Vector2f    velocity;
         float           angle       = 0.f;   // current heading in radians
         float           targetAngle = 0.f;   // heading we're steering toward
@@ -100,6 +108,7 @@ namespace GraphLib {
         int   _preyCount;
 
         // ── red sphere ────────────────────────────────────────────────
+        std::unique_ptr<Entity> _chicken;
         sf::CircleShape _redSphere;
         sf::Vector2f    _redPos;
         sf::Vector2f    _redTarget;
