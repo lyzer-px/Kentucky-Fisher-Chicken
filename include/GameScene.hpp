@@ -32,13 +32,6 @@ namespace GraphLib {
         const char* textureName;
     };
 
-    // static inline const std::array<SphereTypeInfo, 4> SPHERE_TYPES = {{
-    //     { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180) }, // small  blue
-    //     { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0) }, // medium orange
-    //     { 24.f, 6,  12, sf::Color(80,  210,  80), sf::Color(20,  120, 20) }, // large  green
-    //     { 10.f, 10,  3, sf::Color(200,  60, 220), sf::Color(100,  10, 120) }, // rare   purple
-    // }};
-
     static inline const std::array<SphereTypeInfo, 4> SPHERE_TYPES = {{
         { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180), "fish_blue"   },
         { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0), "fish_orange" },
