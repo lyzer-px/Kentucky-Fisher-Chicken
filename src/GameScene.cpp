@@ -10,18 +10,20 @@
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
+#include <numeric>
 
 static constexpr float PI = 3.14159265f;
+static constexpr float W  = 800.f;
+static constexpr float H  = 600.f;
 
 namespace GraphLib {
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ─── helpers ─────────────────────────────────────────────────────────────────
 
 static float randf(float lo, float hi) {
     return lo + static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX) * (hi - lo);
 }
 
-// Linearly interpolate between two colours by t in [0,1]
 static sf::Color lerpColor(sf::Color a, sf::Color b, float t) {
     t = std::clamp(t, 0.f, 1.f);
     return sf::Color(
@@ -31,7 +33,258 @@ static sf::Color lerpColor(sf::Color a, sf::Color b, float t) {
     );
 }
 
-// ─── heart ──────────────────────────────────────────────────────────────────
+// ─── type picker (weighted random) ───────────────────────────────────────────
+
+SphereType GameScene::pickType() const
+{
+    int total = 0;
+    for (const auto& info : SPHERE_TYPES) total += info.weight;
+    int roll = static_cast<int>(randf(0.f, static_cast<float>(total)));
+    int acc  = 0;
+    for (std::size_t i = 0; i < SPHERE_TYPES.size(); ++i) {
+        acc += SPHERE_TYPES[i].weight;
+        if (roll < acc) return static_cast<SphereType>(i);
+    }
+    return SphereType::SMALL;
+}
+
+// ─── prey factory ────────────────────────────────────────────────────────────
+
+Prey GameScene::makePrey() const
+{
+    Prey p;
+    p.type = pickType();
+    const auto& info = SPHERE_TYPES[static_cast<int>(p.type)];
+
+    p.shape.setRadius(info.radius);
+    p.shape.setOrigin(info.radius, info.radius);
+    p.shape.setFillColor(info.color);
+    p.shape.setOutlineColor(info.outline);
+    p.shape.setOutlineThickness(2.f);
+
+    float margin = info.radius + 10.f;
+    float x = randf(margin, W - margin);
+    float y = randf(_waterY + margin, H - margin);
+    p.shape.setPosition(x, y);
+
+    p.angle       = randf(0.f, 2.f * PI);
+    p.targetAngle = p.angle;
+    p.speed       = randf(_preySpeed * 0.6f, _preySpeed * 1.4f);
+    p.wanderTimer = randf(1.5f, 4.f);
+    p.velocity    = {std::cos(p.angle) * p.speed, std::sin(p.angle) * p.speed};
+    return p;
+}
+
+void GameScene::spawnPrey()
+{
+    _prey.clear();
+    int count = targetPreyCount();
+    for (int i = 0; i < count; ++i)
+        _prey.push_back(makePrey());
+}
+
+// More fish when sea is high (waterY is a smaller number = higher on screen)
+int GameScene::targetPreyCount() const
+{
+    float seaRange  = SEA_MAX_Y - SEA_MIN_Y;
+    float highness  = (_targetWaterY - SEA_MIN_Y) / seaRange; // 0=max high, 1=max low
+    // base + up to 8 extra when fully high
+    int bonus = static_cast<int>((1.f - highness) * 8.f);
+    return _preyCount + bonus;
+}
+
+// ─── sea level ───────────────────────────────────────────────────────────────
+
+void GameScene::updateSea(float dt)
+{
+    // Animate surface toward target
+    if (std::abs(_waterY - _targetWaterY) > 1.f) {
+        float dir = (_targetWaterY > _waterY) ? 1.f : -1.f;
+        float step = SEA_ANIM_SPEED * dt;
+        if (step >= std::abs(_targetWaterY - _waterY))
+            _waterY = _targetWaterY;
+        else
+            _waterY += dir * step;
+        updateWaterShape();
+    }
+
+    // Schedule next shift
+    _seaShiftTimer -= dt;
+    if (_seaShiftTimer <= 0.f) {
+        float shift = randf(SEA_SHIFT_MIN, SEA_SHIFT_MAX);
+        // Randomly go up or down, but keep within bounds
+        bool goUp = randf(0.f, 1.f) < 0.5f;
+        float candidate = _targetWaterY + (goUp ? -shift : shift);
+        _targetWaterY = std::clamp(candidate, SEA_MIN_Y, SEA_MAX_Y);
+        _seaShiftTimer = randf(SEA_SHIFT_INTERVAL_MIN, SEA_SHIFT_INTERVAL_MAX);
+        // Extra fish will be spawned by updatePrey's replenish loop this frame
+    }
+}
+
+void GameScene::updateWaterShape()
+{
+    _water.setPosition(0.f, _waterY);
+    _water.setSize({W, H - _waterY});
+
+    // Also update hover Y for red sphere if hovering
+    if (_redState == RedState::HOVERING)
+        _redPos.y = _waterY - HOVER_OFFSET;
+}
+
+void GameScene::cullDrownedPrey()
+{
+    for (auto& p : _prey) {
+        if (!p.alive) continue;
+        float top = p.shape.getPosition().y - SPHERE_TYPES[static_cast<int>(p.type)].radius;
+        if (top < _waterY)
+            p.alive = false;
+    }
+}
+
+// ─── prey update ─────────────────────────────────────────────────────────────
+
+void GameScene::updatePrey(float dt)
+{
+    static constexpr float TURN_SPEED = 2.2f; // radians/s max turn rate
+
+    for (auto& p : _prey) {
+        if (!p.alive) continue;
+        const float R = SPHERE_TYPES[static_cast<int>(p.type)].radius;
+
+        // ── wander: pick a new target angle periodically ──
+        p.wanderTimer -= dt;
+        if (p.wanderTimer <= 0.f) {
+            // Drift by at most ~90 degrees, biased to keep swimming
+            p.targetAngle += randf(-PI * 0.6f, PI * 0.6f);
+            p.wanderTimer  = randf(1.5f, 4.f);
+        }
+
+        // ── smooth steering: rotate current angle toward target ──
+        float diff = p.targetAngle - p.angle;
+        // Wrap diff to [-PI, PI]
+        while (diff >  PI) diff -= 2.f * PI;
+        while (diff < -PI) diff += 2.f * PI;
+        float maxTurn = TURN_SPEED * dt;
+        if (std::abs(diff) <= maxTurn)
+            p.angle = p.targetAngle;
+        else
+            p.angle += (diff > 0.f ? maxTurn : -maxTurn);
+
+        p.velocity = {std::cos(p.angle) * p.speed, std::sin(p.angle) * p.speed};
+
+        sf::Vector2f pos = p.shape.getPosition();
+        pos += p.velocity * dt;
+
+        // ── wall bounce: reflect angle instead of snapping velocity ──
+        if (pos.x - R < 0.f)    { pos.x = R;           p.angle = PI - p.angle;       p.targetAngle = p.angle; }
+        if (pos.x + R > W)       { pos.x = W - R;       p.angle = PI - p.angle;       p.targetAngle = p.angle; }
+        if (pos.y - R < _waterY) { pos.y = _waterY + R; p.angle = -p.angle;           p.targetAngle = p.angle; }
+        if (pos.y + R > H)       { pos.y = H - R;       p.angle = -p.angle;           p.targetAngle = p.angle; }
+
+        p.shape.setPosition(pos);
+
+        // ── depth tint: grey out prey below the reachable zone ──
+        float depth = pos.y - _waterY;
+        if (depth > MAX_DIVE_DEPTH) {
+            // lerp toward dark grey as it sinks deeper past the limit
+            float excess = std::clamp((depth - MAX_DIVE_DEPTH) / 80.f, 0.f, 1.f);
+            const sf::Color& base = SPHERE_TYPES[static_cast<int>(p.type)].color;
+            sf::Color grey(60, 60, 70);
+            p.shape.setFillColor(lerpColor(base, grey, excess));
+        } else {
+            p.shape.setFillColor(SPHERE_TYPES[static_cast<int>(p.type)].color);
+        }
+    }
+
+    // Replenish to match sea-level-aware target count
+    int target = targetPreyCount();
+    int alive  = 0;
+    for (const auto& p : _prey) alive += p.alive ? 1 : 0;
+    while (alive < target) {
+        _prey.push_back(makePrey());
+        ++alive;
+    }
+}
+
+// ─── red sphere ──────────────────────────────────────────────────────────────
+
+void GameScene::updateRedSphere(float dt)
+{
+    if (_redState == RedState::HOVERING) {
+        _bobTimer += dt;
+        float hoverY = (_waterY - HOVER_OFFSET) + std::sin(_bobTimer * 2.f) * 6.f;
+        _redPos.y = hoverY;
+        _redSphere.setPosition(_redPos);
+        return;
+    }
+
+    sf::Vector2f dir  = _redTarget - _redPos;
+    float        dist = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    float        spd  = (_redState == RedState::DIVING) ? DIVE_SPEED : RETURN_SPEED;
+
+    if (dist < spd * dt) {
+        _redPos = _redTarget;
+        _redSphere.setPosition(_redPos);
+        if (_redState == RedState::DIVING) {
+            _redTarget = {_redPos.x, _waterY - HOVER_OFFSET};
+            _redState  = RedState::RETURNING;
+        } else {
+            _redPos.x  = W / 2.f;
+            _redTarget = _redPos;
+            _redState  = RedState::HOVERING;
+            _bobTimer  = 0.f;
+        }
+    } else {
+        dir    /= dist;
+        _redPos += dir * spd * dt;
+        _redSphere.setPosition(_redPos);
+    }
+}
+
+// ─── click ───────────────────────────────────────────────────────────────────
+
+int GameScene::findClickedPrey(sf::Vector2f pos) const
+{
+    for (int i = 0; i < (int)_prey.size(); ++i) {
+        if (!_prey[i].alive) continue;
+        const float R = SPHERE_TYPES[static_cast<int>(_prey[i].type)].radius;
+        sf::Vector2f d = pos - _prey[i].shape.getPosition();
+        if (std::sqrt(d.x * d.x + d.y * d.y) <= R + 6.f)
+            return i;
+    }
+    return -1;
+}
+
+void GameScene::handleClick(sf::Vector2f pos)
+{
+    if (_gameOver || _redState != RedState::HOVERING) return;
+
+    int idx = findClickedPrey(pos);
+    if (idx == -1) return;
+
+    sf::Vector2f target = _prey[idx].shape.getPosition();
+    float        depth  = target.y - _waterY;
+
+    _redTarget = target;
+    _redState  = RedState::DIVING;
+
+    if (depth <= MAX_DIVE_DEPTH) {
+        int fill = SPHERE_TYPES[static_cast<int>(_prey[idx].type)].fill;
+        _prey[idx].alive = false;
+        _hungerFill = std::min(1.f, _hungerFill + fill / static_cast<float>(CATCHES_TO_WIN));
+
+        if (_hungerFill >= 1.f)
+            levelUp();
+        else
+            updateBar();
+    } else {
+        _lives--;
+        if (_lives <= 0) { _lives = 0; _gameOver = true; }
+        buildHearts();
+    }
+}
+
+// ─── UI ──────────────────────────────────────────────────────────────────────
 
 sf::ConvexShape GameScene::makeHeart(sf::Vector2f center, float size, sf::Color color) const
 {
@@ -41,10 +294,8 @@ sf::ConvexShape GameScene::makeHeart(sf::Vector2f center, float size, sf::Color 
     for (int i = 0; i < N; ++i) {
         float t = static_cast<float>(i) / N * 2.f * PI;
         float x =  size * 0.9f * std::pow(std::sin(t), 3.f);
-        float y = -size * (0.8125f * std::cos(t)
-                         - 0.3125f * std::cos(2.f * t)
-                         - 0.125f  * std::cos(3.f * t)
-                         - 0.0625f * std::cos(4.f * t));
+        float y = -size * (0.8125f * std::cos(t) - 0.3125f * std::cos(2.f * t)
+                         - 0.125f  * std::cos(3.f * t) - 0.0625f * std::cos(4.f * t));
         h.setPoint(i, {center.x + x, center.y + y});
     }
     h.setFillColor(color);
@@ -61,11 +312,9 @@ void GameScene::buildHearts()
     }
 }
 
-// ─── game-over X ────────────────────────────────────────────────────────────
-
 void GameScene::buildGameOverX()
 {
-    const float CX = 400.f, CY = 300.f, LEN = 80.f, TH = 18.f;
+    const float CX = W / 2.f, CY = H / 2.f, LEN = 80.f, TH = 18.f;
     for (int i = 0; i < 2; ++i) {
         _gameOverX[i].setSize({LEN * 2.f, TH});
         _gameOverX[i].setOrigin(LEN, TH / 2.f);
@@ -75,179 +324,48 @@ void GameScene::buildGameOverX()
     }
 }
 
-// ─── stomach bar ────────────────────────────────────────────────────────────
-
 void GameScene::updateBar()
 {
-    float t = static_cast<float>(_catchesThisLevel) / static_cast<float>(CATCHES_TO_WIN);
-    t = std::clamp(t, 0.f, 1.f);
-
-    // Colour: red → orange → green
+    float t = std::clamp(_hungerFill, 0.f, 1.f);
     sf::Color barColor;
     if (t < 0.5f)
         barColor = lerpColor(sf::Color(210, 40, 40), sf::Color(230, 150, 20), t * 2.f);
     else
         barColor = lerpColor(sf::Color(230, 150, 20), sf::Color(60, 200, 80), (t - 0.5f) * 2.f);
 
-    float fillW = BAR_W * t;
-    _barFill.setSize({fillW, BAR_H});
+    _barFill.setSize({BAR_W * t, BAR_H});
     _barFill.setFillColor(barColor);
 }
 
-// ─── blue spheres ────────────────────────────────────────────────────────────
-
-BlueSphere GameScene::makeBlueSphere() const
-{
-    BlueSphere bs;
-    bs.shape.setRadius(SPHERE_RADIUS);
-    bs.shape.setOrigin(SPHERE_RADIUS, SPHERE_RADIUS);
-    bs.shape.setFillColor(sf::Color(60, 140, 255));
-    bs.shape.setOutlineColor(sf::Color(20, 60, 180));
-    bs.shape.setOutlineThickness(2.f);
-
-    float x = randf(SPHERE_RADIUS + 10.f, 800.f - SPHERE_RADIUS - 10.f);
-    float y = randf(WATER_Y + SPHERE_RADIUS + 10.f, 600.f - SPHERE_RADIUS - 10.f);
-    bs.shape.setPosition(x, y);
-
-    float angle = randf(0.f, 2.f * PI);
-    float speed = randf(_blueSpeed * 0.5f, _blueSpeed * 1.5f);
-    bs.velocity  = {std::cos(angle) * speed, std::sin(angle) * speed};
-    return bs;
-}
-
-void GameScene::spawnBlueSpheres()
-{
-    _blueSpheres.clear();
-    for (int i = 0; i < _sphereCount; ++i)
-        _blueSpheres.push_back(makeBlueSphere());
-}
-
-void GameScene::updateBlueSpheres(float dt)
-{
-    const float W = 800.f, H = 600.f;
-    for (auto& bs : _blueSpheres) {
-        if (!bs.alive) continue;
-        sf::Vector2f pos = bs.shape.getPosition();
-        pos += bs.velocity * dt;
-
-        if (pos.x - SPHERE_RADIUS < 0.f)    { pos.x = SPHERE_RADIUS;            bs.velocity.x =  std::abs(bs.velocity.x); }
-        if (pos.x + SPHERE_RADIUS > W)        { pos.x = W - SPHERE_RADIUS;        bs.velocity.x = -std::abs(bs.velocity.x); }
-        if (pos.y - SPHERE_RADIUS < WATER_Y)  { pos.y = WATER_Y + SPHERE_RADIUS;  bs.velocity.y =  std::abs(bs.velocity.y); }
-        if (pos.y + SPHERE_RADIUS > H)        { pos.y = H - SPHERE_RADIUS;        bs.velocity.y = -std::abs(bs.velocity.y); }
-
-        bs.shape.setPosition(pos);
-
-        if (randf(0.f, 1.f) < 0.008f) {
-            float angle = randf(0.f, 2.f * PI);
-            float speed = randf(_blueSpeed * 0.5f, _blueSpeed * 1.5f);
-            bs.velocity = {std::cos(angle) * speed, std::sin(angle) * speed};
-        }
-    }
-}
-
-// ─── red sphere ──────────────────────────────────────────────────────────────
-
-void GameScene::updateRedSphere(float dt)
-{
-    if (_redState == RedState::HOVERING) {
-        _bobTimer += dt;
-        _redPos.y = HOVER_Y + std::sin(_bobTimer * 2.f) * 6.f;
-        _redSphere.setPosition(_redPos);
-        return;
-    }
-
-    sf::Vector2f dir  = _redTarget - _redPos;
-    float        dist = std::sqrt(dir.x * dir.x + dir.y * dir.y);
-    float        spd  = (_redState == RedState::DIVING) ? DIVE_SPEED : RETURN_SPEED;
-
-    if (dist < spd * dt) {
-        _redPos = _redTarget;
-        _redSphere.setPosition(_redPos);
-        if (_redState == RedState::DIVING) {
-            _redTarget = {_redPos.x, HOVER_Y};
-            _redState  = RedState::RETURNING;
-        } else {
-            _redPos.x  = 400.f;
-            _redTarget = _redPos;
-            _redState  = RedState::HOVERING;
-            _bobTimer  = 0.f;
-        }
-    } else {
-        dir    /= dist;
-        _redPos += dir * spd * dt;
-        _redSphere.setPosition(_redPos);
-    }
-}
-
-// ─── click handling ──────────────────────────────────────────────────────────
-
-int GameScene::findClickedSphere(sf::Vector2f pos) const
-{
-    for (int i = 0; i < (int)_blueSpheres.size(); ++i) {
-        if (!_blueSpheres[i].alive) continue;
-        sf::Vector2f d = pos - _blueSpheres[i].shape.getPosition();
-        if (std::sqrt(d.x * d.x + d.y * d.y) <= SPHERE_RADIUS + 6.f)
-            return i;
-    }
-    return -1;
-}
-
-void GameScene::handleClick(sf::Vector2f pos)
-{
-    if (_gameOver || _redState != RedState::HOVERING) return;
-
-    int idx = findClickedSphere(pos);
-    if (idx == -1) return;
-
-    sf::Vector2f target = _blueSpheres[idx].shape.getPosition();
-    float        depth  = target.y - WATER_Y;
-
-    _redTarget = target;
-    _redState  = RedState::DIVING;
-
-    if (depth <= MAX_DIVE_DEPTH) {
-        _blueSpheres[idx].alive = false;
-        _blueSpheres.push_back(makeBlueSphere());
-        _catchesThisLevel++;
-
-        if (_catchesThisLevel >= CATCHES_TO_WIN)
-            levelUp();
-        else
-            updateBar();
-    } else {
-        _lives--;
-        if (_lives <= 0) { _lives = 0; _gameOver = true; }
-        buildHearts();
-    }
-}
-
-// ─── level up ────────────────────────────────────────────────────────────────
+// ─── level up / reset ────────────────────────────────────────────────────────
 
 void GameScene::levelUp()
 {
     _level++;
-    _catchesThisLevel = 0;
-    _blueSpeed   = 60.f + (_level - 1) * 20.f;   // +20 px/s per level
-    _sphereCount = 6    + (_level - 1) * 2;        // +2 spheres per level
-    spawnBlueSpheres();
+    _hungerFill  = 0.f;
+    _preySpeed   = 60.f + (_level - 1) * 20.f;
+    _preyCount   = 6    + (_level - 1) * 2;
+    spawnPrey();
     updateBar();
 }
 
-// ─── reset ───────────────────────────────────────────────────────────────────
-
 void GameScene::reset()
 {
-    _level            = 1;
-    _catchesThisLevel = 0;
-    _lives            = MAX_LIVES;
-    _gameOver         = false;
-    _blueSpeed        = 60.f;
-    _sphereCount      = 6;
-    _redPos           = {400.f, HOVER_Y};
+    _level       = 1;
+    _hungerFill  = 0.f;
+    _lives       = MAX_LIVES;
+    _gameOver    = false;
+    _preySpeed   = 60.f;
+    _preyCount   = 6;
+    _waterY      = BASE_WATER_Y;
+    _targetWaterY = BASE_WATER_Y;
+    _seaShiftTimer = randf(SEA_SHIFT_INTERVAL_MIN, SEA_SHIFT_INTERVAL_MAX);
+    _redPos      = {W / 2.f, _waterY - HOVER_OFFSET};
     _redSphere.setPosition(_redPos);
-    _redState         = RedState::HOVERING;
-    _bobTimer         = 0.f;
-    spawnBlueSpheres();
+    _redState    = RedState::HOVERING;
+    _bobTimer    = 0.f;
+    updateWaterShape();
+    spawnPrey();
     buildHearts();
     updateBar();
 }
@@ -256,28 +374,28 @@ void GameScene::reset()
 
 GameScene::GameScene(Game& game)
     : AScene(game),
+      _waterY(BASE_WATER_Y),
+      _targetWaterY(BASE_WATER_Y),
+      _seaShiftTimer(6.f),
       _level(1),
-      _blueSpeed(60.f),
-      _sphereCount(6),
+      _preySpeed(60.f),
+      _preyCount(6),
       _redState(RedState::HOVERING),
       _bobTimer(0.f),
-      _catchesThisLevel(0),
+      _hungerFill(0.f),
       _lives(MAX_LIVES),
       _gameOver(false)
 {
     std::srand(static_cast<unsigned>(std::time(nullptr)));
 
-    // Background
-    _sky.setSize({800.f, WATER_Y});
+    _sky.setSize({W, H});
     _sky.setPosition(0, 0);
     _sky.setFillColor(sf::Color(135, 206, 235));
 
-    _water.setSize({800.f, 600.f - WATER_Y});
-    _water.setPosition(0, WATER_Y);
     _water.setFillColor(sf::Color(30, 80, 160, 210));
+    updateWaterShape();
 
-    // Red sphere
-    _redPos = {400.f, HOVER_Y};
+    _redPos = {W / 2.f, _waterY - HOVER_OFFSET};
     _redSphere.setRadius(RED_RADIUS);
     _redSphere.setOrigin(RED_RADIUS, RED_RADIUS);
     _redSphere.setFillColor(sf::Color(220, 40, 40));
@@ -285,18 +403,16 @@ GameScene::GameScene(Game& game)
     _redSphere.setOutlineThickness(2.f);
     _redSphere.setPosition(_redPos);
 
-    // Stomach bar — background track
     _barBg.setSize({BAR_W, BAR_H});
     _barBg.setPosition(BAR_X, BAR_Y);
     _barBg.setFillColor(sf::Color(40, 40, 50));
     _barBg.setOutlineColor(sf::Color(80, 80, 100));
     _barBg.setOutlineThickness(2.f);
 
-    // Stomach bar — fill (starts at 0 width)
     _barFill.setPosition(BAR_X, BAR_Y);
     _barFill.setSize({0.f, BAR_H});
 
-    spawnBlueSpheres();
+    spawnPrey();
     buildHearts();
     buildGameOverX();
     updateBar();
@@ -307,7 +423,9 @@ GameScene::GameScene(Game& game)
 void GameScene::update(float dt)
 {
     if (_gameOver) return;
-    updateBlueSpheres(dt);
+    updateSea(dt);
+    cullDrownedPrey();
+    updatePrey(dt);
     updateRedSphere(dt);
 }
 
@@ -325,28 +443,24 @@ void GameScene::handleEvent(const sf::Event& event)
 
 void GameScene::render()
 {
-    sf::RenderWindow& w = _game.getWindow();
+    sf::RenderWindow& win = _game.getWindow();
 
-    w.draw(_sky);
-    w.draw(_water);
+    win.draw(_sky);
+    win.draw(_water);
 
-    for (const auto& bs : _blueSpheres)
-        if (bs.alive) w.draw(bs.shape);
+    for (const auto& p : _prey)
+        if (p.alive) win.draw(p.shape);
 
-    w.draw(_redSphere);
+    win.draw(_redSphere);
+    win.draw(_barBg);
+    win.draw(_barFill);
 
-    // Stomach bar
-    w.draw(_barBg);
-    w.draw(_barFill);
-
-    // Hearts
     for (const auto& h : _hearts)
-        w.draw(h);
+        win.draw(h);
 
-    // Game-over X
     if (_gameOver) {
-        w.draw(_gameOverX[0]);
-        w.draw(_gameOverX[1]);
+        win.draw(_gameOverX[0]);
+        win.draw(_gameOverX[1]);
     }
 }
 

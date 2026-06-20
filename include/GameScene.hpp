@@ -15,9 +15,37 @@
 
 namespace GraphLib {
 
-    struct BlueSphere {
+    // ── circle types ──────────────────────────────────────────────────────────
+    enum class SphereType {
+        SMALL  = 0,  // radius 10, fill 1,  weight 60
+        MEDIUM = 1,  // radius 16, fill 3,  weight 25
+        LARGE  = 2,  // radius 24, fill 6,  weight 12
+        RARE   = 3,  // radius 10, fill 10, weight 3
+    };
+
+    struct SphereTypeInfo {
+        float       radius;
+        int         fill;       // hunger points out of 10 to fill per catch
+        int         weight;     // spawn weight (higher = more common)
+        sf::Color   color;
+        sf::Color   outline;
+    };
+
+    static inline const std::array<SphereTypeInfo, 4> SPHERE_TYPES = {{
+        { 10.f, 1,  60, sf::Color(100, 160, 255), sf::Color(40,  80, 180) }, // small  blue
+        { 16.f, 3,  25, sf::Color(255, 160,  40), sf::Color(180,  90,  0) }, // medium orange
+        { 24.f, 6,  12, sf::Color(80,  210,  80), sf::Color(20,  120, 20) }, // large  green
+        { 10.f, 10,  3, sf::Color(200,  60, 220), sf::Color(100,  10, 120) }, // rare   purple
+    }};
+
+    struct Prey {
         sf::CircleShape shape;
         sf::Vector2f    velocity;
+        float           angle       = 0.f;   // current heading in radians
+        float           targetAngle = 0.f;   // heading we're steering toward
+        float           wanderTimer = 0.f;   // countdown to next direction change
+        float           speed       = 0.f;   // scalar speed, kept constant
+        SphereType      type;
         bool            alive = true;
     };
 
@@ -38,27 +66,38 @@ namespace GraphLib {
 
     private:
         // ── fixed layout ──────────────────────────────────────────────
-        static constexpr float WATER_Y        = 300.f;
-        static constexpr float MAX_DIVE_DEPTH = 120.f;
-        static constexpr float SPHERE_RADIUS  = 18.f;
+        static constexpr float BASE_WATER_Y   = 300.f; // default sea surface
+        static constexpr float SEA_MIN_Y      = 180.f; // highest the sea can reach
+        static constexpr float SEA_MAX_Y      = 420.f; // lowest the sea can reach
+        static constexpr float SEA_SHIFT_MIN  = 40.f;  // min jump per shift
+        static constexpr float SEA_SHIFT_MAX  = 120.f; // max jump per shift
+        static constexpr float SEA_ANIM_SPEED = 90.f;  // px/s the surface moves
+        static constexpr float SEA_SHIFT_INTERVAL_MIN = 4.f;  // seconds between shifts
+        static constexpr float SEA_SHIFT_INTERVAL_MAX = 9.f;
+
+        static constexpr float MAX_DIVE_DEPTH = 120.f; // relative to current waterY
         static constexpr float RED_RADIUS     = 22.f;
-        static constexpr float HOVER_Y        = 250.f;
+        static constexpr float HOVER_OFFSET   = 50.f;  // px above current waterY
         static constexpr float DIVE_SPEED     = 280.f;
         static constexpr float RETURN_SPEED   = 220.f;
         static constexpr int   MAX_LIVES      = 3;
-        static constexpr int   CATCHES_TO_WIN = 10;
+        static constexpr int   CATCHES_TO_WIN = 10;    // hunger points, not catch count
 
         // stomach bar geometry — top-right, small
-        static constexpr float BAR_W      = 76.f;   // 760 / 10
-        static constexpr float BAR_H      = 8.f;    // 22 / ~3, feels right at this scale
-        static constexpr float BAR_X      = 800.f - BAR_W - 12.f;
-        static constexpr float BAR_Y      = 12.f;
-        static constexpr float BAR_RADIUS = 2.f;
+        static constexpr float BAR_W = 76.f;
+        static constexpr float BAR_H = 8.f;
+        static constexpr float BAR_X = 800.f - BAR_W - 12.f;
+        static constexpr float BAR_Y = 12.f;
+
+        // ── sea state ─────────────────────────────────────────────────
+        float _waterY;          // current rendered surface Y
+        float _targetWaterY;    // where surface is heading
+        float _seaShiftTimer;   // countdown to next shift
 
         // ── per-level state ───────────────────────────────────────────
-        int   _level;           // current level (starts at 1)
-        float _blueSpeed;       // increases per level
-        int   _sphereCount;     // increases per level
+        int   _level;
+        float _preySpeed;
+        int   _preyCount;
 
         // ── red sphere ────────────────────────────────────────────────
         sf::CircleShape _redSphere;
@@ -67,41 +106,41 @@ namespace GraphLib {
         RedState        _redState;
         float           _bobTimer;
 
-        // ── blue spheres ──────────────────────────────────────────────
-        std::vector<BlueSphere> _blueSpheres;
+        // ── prey ──────────────────────────────────────────────────────
+        std::vector<Prey> _prey;
 
         // ── game state ────────────────────────────────────────────────
-        int  _catchesThisLevel; // 0–10, drives bar fill
-        int  _lives;
-        bool _gameOver;
+        float _hungerFill;      // 0.0 – 1.0
+        int   _lives;
+        bool  _gameOver;
 
         // ── UI shapes ─────────────────────────────────────────────────
-        // Stomach bar
-        sf::RectangleShape _barBg;      // dark background track
-        sf::RectangleShape _barFill;    // coloured fill
-
-        // Lives — 3 heart shapes
+        sf::RectangleShape _barBg;
+        sf::RectangleShape _barFill;
         std::array<sf::ConvexShape, MAX_LIVES> _hearts;
-
-        // Game-over X
-        std::array<sf::RectangleShape, 2> _gameOverX;
+        std::array<sf::RectangleShape, 2>      _gameOverX;
 
         // Background
         sf::RectangleShape _sky;
         sf::RectangleShape _water;
 
         // ── helpers ───────────────────────────────────────────────────
-        BlueSphere      makeBlueSphere() const;
+        Prey            makePrey() const;
+        SphereType      pickType() const;
         sf::ConvexShape makeHeart(sf::Vector2f center, float size, sf::Color color) const;
-        void            spawnBlueSpheres();
-        void            updateBlueSpheres(float dt);
+        void            spawnPrey();
+        void            updatePrey(float dt);
+        void            cullDrownedPrey();   // remove prey above waterline after sea drops
+        void            updateSea(float dt);
         void            updateRedSphere(float dt);
         void            handleClick(sf::Vector2f pos);
-        int             findClickedSphere(sf::Vector2f pos) const;
+        int             findClickedPrey(sf::Vector2f pos) const;
         void            buildHearts();
         void            buildGameOverX();
-        void            updateBar();        // recompute fill width + colour
+        void            updateBar();
+        void            updateWaterShape();
         void            levelUp();
         void            reset();
+        int             targetPreyCount() const; // base count + bonus for high sea
     };
 }
