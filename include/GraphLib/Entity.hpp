@@ -58,6 +58,12 @@ namespace GraphLib {
             void setSize(const sf::Vector2f& size);
             void setVelocity(const sf::Vector2f& velocity);
             void setColor(const sf::Color& color);
+            void setRotation(float angle);
+            void setVisible(bool visible);
+            bool isVisible() const;
+            void centerOrigin();
+            const sf::Vector2f& getPosition() const;
+            sf::FloatRect getGlobalBounds() const;
             void render(sf::RenderWindow& window);
             void update(float deltaTime);
             const std::string &getName() const;

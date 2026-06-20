@@ -106,9 +106,17 @@ namespace GraphLib {
         _sprite.setPosition(_position);
     }
 
-    void Entity::setSize(const sf::Vector2f& size) {
+    void Entity::setSize(const sf::Vector2f& size)
+    {
         _size = size;
-        _sprite.setScale(_size.x / _sprite.getTextureRect().width, _size.y / _sprite.getTextureRect().height);
+        sf::IntRect rect = _sprite.getTextureRect();
+
+        if (rect.width == 0 || rect.height == 0)
+            return;
+        _sprite.setScale(
+            _size.x / static_cast<float>(rect.width),
+            _size.y / static_cast<float>(rect.height)
+        );
     }
 
     void Entity::setVelocity(const sf::Vector2f& velocity) {
@@ -118,6 +126,41 @@ namespace GraphLib {
     void Entity::setColor(const sf::Color& color) {
         _color = color;
         _sprite.setColor(_color);
+    }
+
+    void Entity::setRotation(float angle)
+    {
+        _sprite.setRotation(angle);
+    }
+
+    void Entity::setVisible(bool visible)
+    {
+        _isVisible = visible;
+    }
+
+    bool Entity::isVisible() const
+    {
+        return _isVisible;
+    }
+
+    void Entity::centerOrigin()
+    {
+        sf::FloatRect bounds = _sprite.getLocalBounds();
+
+        _sprite.setOrigin(
+            bounds.left + bounds.width / 2.f,
+            bounds.top + bounds.height / 2.f
+        );
+    }
+
+    const sf::Vector2f& Entity::getPosition() const
+    {
+        return _position;
+    }
+
+    sf::FloatRect Entity::getGlobalBounds() const
+    {
+        return _sprite.getGlobalBounds();
     }
 
     void Entity::render(sf::RenderWindow& window) {
