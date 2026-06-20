@@ -5,14 +5,16 @@
 ** Scene class
 */
 
+
+#pragma once
 #include <SFML/Graphics.hpp>
 #include <vector>
 #include <memory>
+#include "GraphLib/Entity.hpp"
 
 namespace GraphLib {
-    class Game;
-    class Entity;
 
+    class Game;
     class AScene {
         public:
             AScene(Game& game);

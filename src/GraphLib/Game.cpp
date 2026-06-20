@@ -6,6 +6,7 @@
 */
 
 #include "GraphLib/Game.hpp"
+#include "GraphLib/Scene.hpp"
 
 namespace GraphLib {
     Game::Game() : _currentScene(MAIN_MENU), _window(sf::VideoMode(800, 600), "GraphLib Game") {}
@@ -35,7 +36,7 @@ namespace GraphLib {
         return _currentScene;
     }
 
-    void Game::loadScene(currentScene_t scene, std::unique_ptr<Scene> scenePtr) {
+    void Game::loadScene(currentScene_t scene, std::unique_ptr<AScene> scenePtr) {
         _scenes[scene] = std::move(scenePtr);
     }
 
@@ -53,7 +54,7 @@ namespace GraphLib {
 
             _window.clear();
             if (_scenes.find(_currentScene) != _scenes.end()) {
-                _scenes[_currentScene]->update();
+                _scenes[_currentScene]->update(1);
                 _scenes[_currentScene]->render();
             }
             _window.display();

@@ -6,8 +6,10 @@
 */
 
 #include "GraphLib/Entity.hpp"
+#include <string>
 
 namespace GraphLib {
+
     Animation::Animation(
         std::size_t frameCount,
         float frameDuration,
@@ -16,7 +18,12 @@ namespace GraphLib {
         std::size_t rows,
         sf::Vector2i startFrame,
         std::size_t currentFrame
-    ) : _frameCount(frameCount), _frameDuration(frameDuration), _frameSize(frameSize), _columns(columns), _rows(rows), _startFrame(startFrame), _currentFrame(currentFrame) {}
+    ) : _frameSize(frameSize),
+    _startFrame(startFrame), 
+    _currentFrame(currentFrame),
+    _frameCount(frameCount),
+    _columns(columns), _rows(rows),
+    _frameDuration(frameDuration) {}
 
     Animation::~Animation() {}
 
@@ -125,5 +132,9 @@ namespace GraphLib {
         if (_animation) {
             _animation->update(_sprite, deltaTime);
         }
+    }
+
+    const std::string &Entity::getName() const {
+        return _entityName;
     }
 }

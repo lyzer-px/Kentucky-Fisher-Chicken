@@ -19,7 +19,7 @@ CXXFLAGS += -Wall -Wextra -std=c++20
 
 CPPFLAGS = -iquote $(VPATH)
 
-LDFLAGS = -L -lsfml
+LDFLAGS = -lsfml-graphics -lsfml-window -lsfml-system
 
 all: $(NAME)
 

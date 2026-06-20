@@ -5,6 +5,8 @@
 ** Entity class
 */
 
+
+#pragma once
 #include <SFML/Graphics.hpp>
 #include <memory>
 
@@ -58,6 +60,7 @@ namespace GraphLib {
             void setColor(const sf::Color& color);
             void render(sf::RenderWindow& window);
             void update(float deltaTime);
+            const std::string &getName() const;
 
         private:
             std::string _entityName;
