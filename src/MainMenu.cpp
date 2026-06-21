@@ -24,21 +24,28 @@ static float randf(float lo, float hi) {
 MenuFish MainMenu::makeFish() const
 {
     MenuFish f;
-    float r = randf(6.f, 18.f);
-    f.shape.setRadius(r);
-    f.shape.setOrigin(r, r);
 
-    // Random muted underwater colour
-    sf::Uint8 rv = static_cast<sf::Uint8>(randf(40, 160));
-    sf::Uint8 gv = static_cast<sf::Uint8>(randf(80, 180));
-    sf::Uint8 bv = static_cast<sf::Uint8>(randf(160, 255));
-    f.shape.setFillColor(sf::Color(rv, gv, bv, 200));
-    f.shape.setOutlineColor(sf::Color(rv / 2, gv / 2, bv / 2, 180));
-    f.shape.setOutlineThickness(1.5f);
-
-    float margin = r + 10.f;
-    f.shape.setPosition(randf(margin, W - margin), randf(_waterY + margin, H - margin));
-
+    static const char* fishTextures[4] = {
+        "fish_blue",
+        "fish_orange",
+        "fish_green",
+        "fish_pink"
+    };
+    int textureIndex = std::min(3, static_cast<int>(randf(0.f, 4.f)));
+    const char* textureName = fishTextures[textureIndex];
+    f.radius = randf(8.f, 18.f);
+    f.entity = std::make_unique<Entity>(
+        _game.getTexture(textureName),
+        textureName
+    );
+    f.entity->centerOrigin();
+    f.entity->setSize({f.radius * 2.f, f.radius * 2.f});
+    float margin = f.radius + 10.f;
+    sf::Vector2f pos{
+        randf(margin, W - margin),
+        randf(_waterY + margin, H - margin)
+    };
+    f.entity->setPosition(pos);
     f.angle       = randf(0.f, 2.f * PI);
     f.targetAngle = f.angle;
     f.speed       = randf(30.f, 70.f);
@@ -56,29 +63,51 @@ void MainMenu::spawnFish(int count)
 void MainMenu::updateFish(float dt)
 {
     static constexpr float TURN = 2.f;
+
     for (auto& f : _fish) {
+        if (!f.entity)
+            continue;
         f.wanderTimer -= dt;
         if (f.wanderTimer <= 0.f) {
             f.targetAngle += randf(-PI * 0.6f, PI * 0.6f);
-            f.wanderTimer  = randf(1.f, 3.f);
+            f.wanderTimer = randf(1.f, 3.f);
         }
-
         float diff = f.targetAngle - f.angle;
-        while (diff >  PI) diff -= 2.f * PI;
-        while (diff < -PI) diff += 2.f * PI;
+        while (diff > PI)
+            diff -= 2.f * PI;
+        while (diff < -PI)
+            diff += 2.f * PI;
         float maxTurn = TURN * dt;
         f.angle += std::clamp(diff, -maxTurn, maxTurn);
-
-        float r = f.shape.getRadius();
-        sf::Vector2f pos = f.shape.getPosition();
-        pos += sf::Vector2f{std::cos(f.angle) * f.speed, std::sin(f.angle) * f.speed} * dt;
-
-        if (pos.x - r < 0.f)    { pos.x = r;       f.angle = PI - f.angle; f.targetAngle = f.angle; }
-        if (pos.x + r > W)       { pos.x = W - r;   f.angle = PI - f.angle; f.targetAngle = f.angle; }
-        if (pos.y - r < _waterY) { pos.y = _waterY + r; f.angle = -f.angle; f.targetAngle = f.angle; }
-        if (pos.y + r > H)       { pos.y = H - r;   f.angle = -f.angle;     f.targetAngle = f.angle; }
-
-        f.shape.setPosition(pos);
+        sf::Vector2f pos = f.entity->getPosition();
+        pos += sf::Vector2f{
+            std::cos(f.angle) * f.speed,
+            std::sin(f.angle) * f.speed
+        } * dt;
+        float r = f.radius;
+        if (pos.x - r < 0.f) {
+            pos.x = r;
+            f.angle = PI - f.angle;
+            f.targetAngle = f.angle;
+        }
+        if (pos.x + r > W) {
+            pos.x = W - r;
+            f.angle = PI - f.angle;
+            f.targetAngle = f.angle;
+        }
+        if (pos.y - r < _waterY) {
+            pos.y = _waterY + r;
+            f.angle = -f.angle;
+            f.targetAngle = f.angle;
+        }
+        if (pos.y + r > H) {
+            pos.y = H - r;
+            f.angle = -f.angle;
+            f.targetAngle = f.angle;
+        }
+        f.entity->setPosition(pos);
+        f.entity->setRotation(f.angle * 180.f / PI);
+        f.entity->update(dt);
     }
 }
 
@@ -106,12 +135,14 @@ void MainMenu::updateSea(float dt)
 
     // Push fish back under the surface if sea rose
     for (auto& f : _fish) {
-        float r = f.shape.getRadius();
-        sf::Vector2f pos = f.shape.getPosition();
+        if (!f.entity)
+            continue;
+        float r = f.radius;
+        sf::Vector2f pos = f.entity->getPosition();
         if (pos.y - r < _waterY) {
             pos.y = _waterY + r;
-            f.shape.setPosition(pos);
-            f.angle = -std::abs(f.angle); // send downward
+            f.entity->setPosition(pos);
+            f.angle = -std::abs(f.angle);
             f.targetAngle = f.angle;
         }
     }
@@ -173,13 +204,13 @@ MainMenu::MainMenu(Game& game)
     _water.setSize({W, H - _waterY});
     _water.setFillColor(sf::Color(30, 80, 160, 210));
 
-    // Red sphere
-    _redSphere.setRadius(22.f);
-    _redSphere.setOrigin(22.f, 22.f);
-    _redSphere.setFillColor(sf::Color(220, 40, 40));
-    _redSphere.setOutlineColor(sf::Color(140, 10, 10));
-    _redSphere.setOutlineThickness(2.f);
-    _redSphere.setPosition(W / 2.f, _waterY - 50.f);
+    _chicken = std::make_unique<Entity>(
+        _game.getTexture("chicken"),
+        "chicken"
+    );
+    _chicken->centerOrigin();
+    _chicken->setSize({44.f, 44.f});
+    _chicken->setPosition({W / 2.f, _waterY - 50.f});
 
     spawnFish(8);
     buildButton();
@@ -193,7 +224,13 @@ void MainMenu::update(float dt)
     updateFish(dt);
 
     _bobTimer += dt;
-    _redSphere.setPosition(W / 2.f, (_waterY - 50.f) + std::sin(_bobTimer * 2.f) * 6.f);
+    if (_chicken) {
+        _chicken->setPosition({
+            W / 2.f,
+            (_waterY - 50.f) + std::sin(_bobTimer * 2.f) * 6.f
+        });
+        _chicken->update(dt);
+    }
 }
 
 void MainMenu::handleEvent(const sf::Event& event)
@@ -212,13 +249,15 @@ void MainMenu::handleEvent(const sf::Event& event)
 void MainMenu::render()
 {
     sf::RenderWindow& win = _game.getWindow();
+
     win.draw(_sky);
     win.draw(_water);
-
-    for (const auto& f : _fish)
-        win.draw(f.shape);
-
-    win.draw(_redSphere);
+    for (const auto& f : _fish) {
+        if (f.entity)
+            f.entity->render(win);
+    }
+    if (_chicken)
+        _chicken->render(win);
     win.draw(_btnBg);
     win.draw(_btnHighlight);
     win.draw(_playTriangle);

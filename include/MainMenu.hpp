@@ -11,12 +11,14 @@
 #include "GraphLib/Game.hpp"
 #include <SFML/Graphics.hpp>
 #include <vector>
+#include <memory>
 
 namespace GraphLib {
 
     // A decorative fish swimming in the menu background
     struct MenuFish {
-        sf::CircleShape shape;
+        std::unique_ptr<Entity> entity;
+        float           radius      = 0.f;
         sf::Vector2f    velocity;
         float           angle       = 0.f;
         float           targetAngle = 0.f;
@@ -62,6 +64,7 @@ namespace GraphLib {
 
         // Red sphere bobbing on surface
         sf::CircleShape _redSphere;
+        std::unique_ptr<Entity> _chicken;
         float           _bobTimer;
 
         // Decorative fish
